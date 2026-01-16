@@ -8,6 +8,7 @@ import sys
 import threading
 import math
 from pynput.mouse import Controller, Button
+from pynput import keyboard
 import tkinter as tk
 from tkinter import ttk, messagebox
 try:
@@ -225,8 +226,10 @@ class MouseActivityGUI:
         self.simulator = None
         self.simulator_thread = None
         self.target_window = None
+        self.keyboard_listener = None
         
         self.create_widgets()
+        self.setup_keyboard_bindings()
         self.refresh_windows()
         
     def create_widgets(self):
@@ -303,9 +306,56 @@ class MouseActivityGUI:
         # Info Label
         info_label = tk.Label(self.root, 
                              text="Note: Mouse will move within the selected window only.\n"
-                                  "Make sure the target window is visible and not minimized.",
+                                  "Make sure the target window is visible and not minimized.\n"
+                                  "Press ESC or Ctrl+C to stop the simulator.",
                              font=("Arial", 8), fg="gray", justify=tk.CENTER)
         info_label.pack(pady=5)
+    
+    def setup_keyboard_bindings(self):
+        """Setup keyboard shortcuts for stopping the simulator"""
+        # Bind ESC key (works when GUI window has focus)
+        self.root.bind('<Escape>', lambda e: self.stop_simulator())
+        
+        # Bind Ctrl+C (works when GUI window has focus)
+        self.root.bind('<Control-c>', lambda e: self.stop_simulator())
+        
+        # Setup global keyboard listener for Ctrl+C (works system-wide)
+        self._keys_pressed = set()
+        
+        def on_press(key):
+            try:
+                # Track pressed keys
+                self._keys_pressed.add(key)
+                
+                # Check if 'c' or 'C' is pressed
+                if key == keyboard.KeyCode.from_char('c') or key == keyboard.KeyCode.from_char('C'):
+                    # Check if Ctrl is also pressed
+                    ctrl_pressed = (keyboard.Key.ctrl_l in self._keys_pressed or 
+                                   keyboard.Key.ctrl_r in self._keys_pressed)
+                    
+                    # If Ctrl+C combination detected, stop simulator
+                    if ctrl_pressed:
+                        self.root.after(0, self.stop_simulator)
+            except (AttributeError, ValueError, TypeError):
+                pass
+        
+        def on_release(key):
+            try:
+                # Remove released key from set
+                self._keys_pressed.discard(key)
+            except (AttributeError, ValueError, TypeError):
+                pass
+        
+        # Start global keyboard listener in a separate thread
+        try:
+            self.keyboard_listener = keyboard.Listener(
+                on_press=on_press,
+                on_release=on_release
+            )
+            self.keyboard_listener.daemon = True
+            self.keyboard_listener.start()
+        except Exception as e:
+            print(f"Warning: Could not start global keyboard listener: {e}")
         
     def refresh_windows(self):
         """Refresh the list of available windows"""
@@ -397,17 +447,32 @@ class MouseActivityGUI:
         self.stop_btn.config(state=tk.DISABLED)
         self.status_label.config(text="Stopped. Ready to start again.")
     
-    def stop_simulator(self):
+    def stop_simulator(self, event=None):
         """Stop the mouse activity simulator"""
-        if self.simulator:
+        if self.simulator and self.simulator.running:
             self.simulator.stop()
             self.status_label.config(text="Stopping...")
+    
+    def cleanup(self):
+        """Cleanup resources"""
+        if self.keyboard_listener:
+            try:
+                self.keyboard_listener.stop()
+            except:
+                pass
 
 
 def main():
     """Main function - launch GUI"""
     root = tk.Tk()
     app = MouseActivityGUI(root)
+    
+    # Handle window close event
+    def on_closing():
+        app.cleanup()
+        root.destroy()
+    
+    root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
 
 
